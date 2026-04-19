@@ -1,3 +1,64 @@
+## Как запускать
+
+1. Поднять обязательные сервисы и заново инициализировать данные:
+   ```powershell
+   docker compose down -v
+   docker compose up -d --build
+   ```
+2. Запустить ETL из исходной таблицы `raw.mock_data` в модель `dwh` внутри PostgreSQL:
+   ```powershell
+   docker compose exec -T spark /opt/spark/bin/spark-submit /opt/project/jobs/etl_to_postgres.py
+   ```
+3. Построить 6 витрин и загрузить их в ClickHouse:
+   ```powershell
+   docker compose exec -T spark /opt/spark/bin/spark-submit /opt/project/jobs/reports_to_clickhouse.py
+   ```
+4. Быстрая проверка:
+   ```powershell
+   docker compose exec -T postgres psql -U postgres -d bdspark -c "SELECT count(*) FROM raw.mock_data;"
+   docker compose exec -T clickhouse clickhouse-client --user etl --password etl_password --query "SHOW TABLES FROM analytics"
+   ```
+   Что делает:
+   - первая команда проверяет загрузку исходных данных в `PostgreSQL`
+   - вторая команда проверяет, что витрины созданы в `ClickHouse`
+5. Проверка количества строк в витринах:
+   ```powershell
+   docker compose exec -T clickhouse clickhouse-client --user etl --password etl_password --query "SELECT table, sum(rows) AS total_rows FROM system.parts WHERE database = 'analytics' AND active GROUP BY table ORDER BY table;"
+   ```
+   Что делает:
+   - показывает, что таблицы витрин не пустые и в них есть данные
+6. Проверка содержимого витрин:
+   ```powershell
+   docker compose exec -T clickhouse clickhouse-client --user etl --password etl_password --query "SELECT product_name, product_category, product_brand, total_units_sold, total_revenue, product_rank_by_units FROM analytics.report_product_sales ORDER BY product_rank_by_units, total_revenue DESC LIMIT 10;"
+   docker compose exec -T clickhouse clickhouse-client --user etl --password etl_password --query "SELECT customer_full_name, customer_country, total_spent, avg_check, customer_rank_by_spend FROM analytics.report_customer_sales ORDER BY customer_rank_by_spend LIMIT 10;"
+   docker compose exec -T clickhouse clickhouse-client --user etl --password etl_password --query "SELECT calendar_year, calendar_month, total_revenue, avg_order_amount, revenue_delta FROM analytics.report_time_sales ORDER BY calendar_year, calendar_month;"
+   ```
+   Что делает:
+   - первая команда проверяет витрину по продуктам
+   - вторая команда проверяет витрину по клиентам
+   - третья команда проверяет витрину по времени
+
+Что поднимется:
+- `PostgreSQL` на `localhost:5432`, база `bdspark`, пользователь `postgres`, пароль `postgres`
+- `ClickHouse` на `localhost:8123` и `localhost:9000`, база `analytics`, пользователь `etl`, пароль `etl_password`
+
+Важно:
+- В `PostgreSQL` исходные данные лежат в `raw.mock_data`, звезда в `dwh.*`.
+- В `ClickHouse` витрины лежат в `analytics`.
+
+Реализовано:
+- данные из 10 CSV загружаются в `PostgreSQL` в таблицу `raw.mock_data`;
+- Spark собирает модель звезда в `dwh.*`;
+- Spark создает в `ClickHouse` 6 витрин `analytics.report_*`.
+
+Витрины:
+- `report_product_sales`: выручка по продуктам, количество продаж, средний рейтинг, количество отзывов;
+- `report_customer_sales`: сумма покупок по клиенту, средний чек, страна клиента;
+- `report_time_sales`: выручка по месяцам, количество заказов, средний чек по месяцам;
+- `report_store_sales`: выручка по магазинам, средний чек, город и страна магазина;
+- `report_supplier_sales`: выручка по поставщикам, страна поставщика;
+- `report_product_quality`: средний рейтинг, количество отзывов, количество проданных единиц, выручка.
+
 # BigDataSpark
 
 Анализ больших данных - лабораторная работа №2 - ETL реализованный с помощью Spark

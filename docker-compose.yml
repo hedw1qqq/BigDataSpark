@@ -1,0 +1,79 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: bigdata_postgres
+    environment:
+      POSTGRES_DB: bdspark
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
+      - ./исходные данные:/datasets:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U postgres -d bdspark",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: bigdata_clickhouse
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: etl
+      CLICKHOUSE_PASSWORD: etl_password
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_log:/var/log/clickhouse-server
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "clickhouse-client --user etl --password etl_password --query 'SELECT 1'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  spark:
+    build:
+      context: .
+      dockerfile: spark/Dockerfile
+    container_name: bigdata_spark
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      SPARK_MASTER: ${SPARK_MASTER:-local[*]}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: bdspark
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: etl
+      CLICKHOUSE_PASSWORD: etl_password
+    command: ["bash", "-lc", "sleep infinity"]
+    working_dir: /opt/project
+    volumes:
+      - .:/opt/project
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+  clickhouse_log:
